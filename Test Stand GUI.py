@@ -7,6 +7,7 @@
 # TODO:
 #  allow for g-code entries for automatic controls
 
+''' For Keyboard hotkeys, launch geany in terminal using the line "sudo geany" '''
 
 # import used packages
 import serial
@@ -18,7 +19,7 @@ from threading import Lock, Thread
 import time
 from time import sleep
 import numpy as np
-
+import keyboard
 
 
 RPtoggle = False
@@ -134,7 +135,7 @@ def update_counter(channel):
 GPIO.add_event_detect(MEPinA, GPIO.RISING, callback=update_counter)
 
 
-# Define motor functions
+#        motor functions
 
 # Rotating platform functions
 
@@ -149,7 +150,7 @@ def RPCW(TargetAngleSpeed):
     global RPcounter
     global RProtations
     global RPtoggle
-    print("CW")
+    #print("CW")
     GPIO.output(RPENA, GPIO.LOW) # Turn motor on
     GPIO.output(RPDIR, GPIO.HIGH) # Set direction to clockwise
     delay = 16*28.125 / (TargetAngleSpeed*130) # Calculate the delay based on teh target angular speed of the platform
@@ -166,7 +167,7 @@ def RPCW(TargetAngleSpeed):
             #print(RProtations)
             RPcounter = 0 # Reset step counter
     if RPtoggle == False: # Exits the thread and turns off the motor
-        print("Thread terminated")
+        #print("Thread terminated")
         GPIO.output(RPENA, GPIO.HIGH)
         return
     return
@@ -182,7 +183,11 @@ def RPCCW(TargetAngleSpeed):
     global RPtoggle
     global RPcounter
     global RProtations
-    print("CCW")
+    oldtime = 0
+    oldcount = 0
+    previousSpeedf = 0
+    previousSpeed = 0
+    #print("CCW")
     GPIO.output(RPENA, GPIO.LOW) # Turn motor on
     GPIO.output(RPDIR, GPIO.LOW) # Set direction to clockwise
     delay = 16*28.125 / (TargetAngleSpeed*130) # Calculate the delay based on the target angular speed of the platform
@@ -198,8 +203,21 @@ def RPCCW(TargetAngleSpeed):
             #print(RProtations)
             RProtations = RProtations + 1 # Update number of rotations
             RPcounter = 0 # Reset step counter
+        
+        currenttime = time.perf_counter() # Get current time
+        dt = currenttime - oldtime # Find change in time to find the time step
+        dcount = abs(counter - oldcount) # Find change in encoder steps from last time step
+        dL = dcount * L # Distance traveled since last step
+        speedWF = dL/dt # Calculate the current speed
+        speedWFf = 0.9274 * previousSpeedf + 0.03681 * speedWF + 0.0359 * previousSpeed # Low-pass filter for the speed measurement to eliminate noise
+        oldtime = currenttime
+        oldtime = currenttime
+        oldcount = counter
+        previousSpeed = speedWF
+        previousSpeedf = speedWFf
+        print(round(speedWFf,3))
     if RPtoggle == False: # Exits the thread and turns off the motor
-        print("Thread terminated")
+        #print("Thread terminated")
         GPIO.output(RPENA, GPIO.HIGH)
         return
     return
@@ -429,13 +447,18 @@ def WFforward():
         dL = dcount * L # Distance traveled since last step
         speedWF = dL/dt # Calculate the current speed
         speedWFf = 0.9274 * previousSpeedf + 0.03681 * speedWF + 0.0359 * previousSpeed # Low-pass filter for the speed measurement to eliminate noise
-        print("True Speed: "+ str(speedWFf))
+        WFSpeedLabelVar.set("True Speed: " + str(speedWFf)[0:4])
         
         # Wire feeder controller
-        Error = TargetSpeed - speedWFf # Current error
+        
+        # Default speed set to 1 in/s if no speed is entered
+        try:
+            Error = TargetSpeed - speedWFf # Current error
+        except:
+            Error = 1 - speedWFf
         Output = 71.48 * Error - 120.5 * prevError + 50.32 * prev2Error  + 1.591* prevOutput - 0.6641 * prev2Output + 0.07266 * prev3Output # Controller function
         Output = max(min(Output, 100), 0) # Saturation
-        
+        #print(Output)
         # Send the controller output to the wire feeder
         pwmA.start(Output)
         pwmB.start(0)
@@ -504,9 +527,17 @@ def WFbackward():
         dL = dcount * L # Distance traveled since last step
         speedWF = dL/dt # Calculate the current speed
         speedWFf = 0.9274 * previousSpeedf + 0.03681 * speedWF + 0.0359 * previousSpeed # Low-pass filter for the speed measurement to eliminate noise
+        WFSpeedLabelVar.set("True Speed: " + str(speedWFf)[0:4])
+
         
         # Wire feeder controller
-        Error = TargetSpeed - speedWFf # Current error
+        
+        # Default speed set to 1 in/s if no speed is entered
+        try:
+            Error = TargetSpeed - speedWFf # Current error
+        except:
+            Error = 1 - speedWFf
+            
         Output = 71.48 * Error - 120.5 * prevError + 50.32 * prev2Error  + 1.591* prevOutput - 0.6641 * prev2Output + 0.07266 * prev3Output # Controller
         Output = max(min(Output, 100), 0) # Saturation
 
@@ -535,10 +566,40 @@ def WFbackward():
             pwmA.start(0)
             return
     return
+
+def forwardWF():
+    global TargetSpeed
+    Output = 0
+    while forward:
+        Output = max(min(Output, 100),0)
+        pwmA.start(TargetSpeed)
+        pwmB.start(0)
+        
+        if stopALL or stopWF:
+            pwmA.start(0)
+            pwmB.start(0)
+            print("stop")
+            return
+    return
+    
+def backwardWF():
+    global TargetSpeed
+    Output = 0
+    while backward:
+        Output = max(min(Output, 100),0)
+        pwmB.start(TargetSpeed)
+        pwmA.start(0)
+        
+        if stopALL or stopWF:
+            pwmA.start(0)
+            pwmB.start(0)
+            print("stop")
+            return
+    return
     
 def WFstop():
     '''This function turns off the wire feeder when stop flag is true and returns.'''
-    while stop:
+    if(stopWF):
         pwmB.start(0)
         pwmA.start(0)
     return
@@ -565,6 +626,7 @@ def PRINT():
     global RPcounter
     global CurrentHeight
     global TargetSpeed
+
     # Turn motors on and set direction to down
     GPIO.output(LENA, GPIO.LOW)
     GPIO.output(RENA, GPIO.LOW)
@@ -589,21 +651,26 @@ def PRINT():
     dummy2 = RProtations
     
     # Ramp function parameters
-    UltTargetSpeed = TargetSpeed
+    
+    try:
+        UltTargetSpeed = TargetSpeed
+    except:
+        TargetSpeed = 1
+        UltTargetSpeed = TargetSpeed
     C = TargetSpeed - 0.3
     A = 0.15
     B = (C/2)+0.3
     D = 0.5*np.log(((0.005/C)-2)/(-0.005/C))
     x=0
-    oldtime = time.perf_counter()
+    # oldtime = time.perf_counter()
     # Start loop
     while PrintToggle and not stopALL:
         currenttime = time.perf_counter()
         #print(currenttime)
-        if x<50:
+        '''if x<50:
             TargetSpeed = (C/2)*((1-np.exp(-2*(A*x-D)))/(1+np.exp(-2*(A*x-D))))+B # Ramp function based on a hyperbolic tangent curve
-            x = x+currenttime-oldtime
-            #print("Reference signal: " + str(TargetSpeed))
+            x = x+currenttime-oldtime'''
+            #print("Reference signal: " + str(TargetSpeed))'''
         if RProtations > dummy1: # If the number of rotations increases, step down
             for i in range(stepsDown-1):
                 GPIO.output(LPUL, GPIO.HIGH)
@@ -639,7 +706,6 @@ def PRINT():
             GPIO.output(RENA, GPIO.HIGH)'''
             break
     return
-    
 
 # Define buttons
 
@@ -690,15 +756,16 @@ def buttonCommand_FeedWireForward():  # manual control for feeding the wire forw
     It starts a thread that runs the WFforward function.'''
     global forward
     global backward
-    global stop
+    global stopWF
     
     # Update the direction variables
     forward = True
     backward = False
-    stop = False
+    stopWF = False
     
     # Start the thread
     threadWF = threading.Thread(target = WFforward)
+    #threadWF = threading.Thread(target = forwardWF)
     threadWF.start()
         
 def buttonCommand_FeedWireBackward():  #manual control for feeding the wire backward
@@ -706,15 +773,16 @@ def buttonCommand_FeedWireBackward():  #manual control for feeding the wire back
     It starts a thread that runs the WFbackward function.'''
     global forward
     global backward
-    global stop
+    global stopWF
     
     # Update the direction variables
     forward = False
     backward = True
-    stop = False
+    stopWF = False
     
     # Start the thread
     threadWF = threading.Thread(target = WFbackward)
+    #threadWF = threading.Thread(target = backwardWF)
     threadWF.start()
 
 def buttonCommand_STOP(): # manual control for stopping wire feed
@@ -722,12 +790,12 @@ def buttonCommand_STOP(): # manual control for stopping wire feed
     It starts a thread that runs the WFstop function.'''
     global forward
     global backward
-    global stop
+    global stopWF
     
     # Update the direction variables
     forward = False
     backward = False
-    stop = True
+    stopWF = True
     
     # Start the thread
     threadWF = threading.Thread(target = WFstop)
@@ -737,8 +805,12 @@ def buttonCommand_updateTargetSpeed(): #Reads the txt entry and sends to serial 
     '''This function assigns an entered target speed to the TargetSpeed global variable.'''
     global TargetSpeed
     
-    TargetSpeed = TargetSpeedEntry.get()
-    TargetSpeed = float(TargetSpeed)
+    #Default speed set to 1 in/s if no speed is entered
+    try:
+        TargetSpeed = TargetSpeedEntry.get()
+        TargetSpeed = float(TargetSpeed)
+    except:
+        TargetSpeed = 1
  
 
 def buttonCommand_RotateCW(): # manual control for rotating platform clockwise
@@ -786,14 +858,26 @@ def buttonCommand_updateAutoRPOnOff(): # Toggles between manual and automated co
         Automated_Controls_stateRP = 1
         AutoRPLabel.set("Automated Rotating Platform Controls: On ")
         RPtoggle = True
-        if RotateDirectionState == 1:
-            # Start the thread
-            threadRPCW = threading.Thread(target=RPCW,args = (TargetAngleSpeed,))
-            threadRPCW.start()
-        else:
-            # Start the thread
-            threadRPCCW = threading.Thread(target=RPCCW, args = (TargetAngleSpeed,))
-            threadRPCCW.start()
+        
+        # Default speed set to 3 deg/s if no speed is entered
+        try:
+            if RotateDirectionState == 1:
+                # Start the thread
+                threadRPCW = threading.Thread(target=RPCW,args = (TargetAngleSpeed,))
+                threadRPCW.start()
+            else:
+                # Start the thread
+                threadRPCCW = threading.Thread(target=RPCCW, args = (TargetAngleSpeed,))
+                threadRPCCW.start()
+        except:
+            if RotateDirectionState == 1:
+                # Start the thread
+                threadRPCW = threading.Thread(target=RPCW,args = (3,))
+                threadRPCW.start()
+            else:
+                # Start the thread
+                threadRPCCW = threading.Thread(target=RPCCW, args = (3,))
+                threadRPCCW.start()
         
 
 def buttonCommand_updateTargetAngleSpeed(): #Reads the txt entry and update target speed
@@ -839,12 +923,24 @@ def buttonCommand_STOPEVERYTHING(): # Update the stop variables
     terminated when this function is called.'''
     global stopALL
     stopALL = True
+    StopLabelVar.set("STOPPED")
     
 def buttonCommand_STARTEVERYTHING(): # Update the stop variables
     '''This function assignes the global variable stopAll to False, allowing
     all functions to reenable.'''
     global stopALL
     stopALL = False
+    StopLabelVar.set("NOT STOPPED")
+    
+# Define hotkeys for keyboard input to use the actuators
+
+keyboard.add_hotkey('up', buttonCommand_moveUp)
+keyboard.add_hotkey('down',buttonCommand_moveDown)
+keyboard.add_hotkey('space', buttonCommand_STOPEVERYTHING)
+keyboard.add_hotkey('left', buttonCommand_FeedWireBackward)
+keyboard.add_hotkey('right', buttonCommand_FeedWireForward)
+keyboard.add_hotkey('shift', buttonCommand_STOP)
+keyboard.add_hotkey('ctrl', buttonCommand_updateAutoRPOnOff)
 
 # declare the automated controls to default at 0 (manual controls)
 Automated_Controls_stateWF = 0
@@ -893,22 +989,22 @@ ActuatorSelectionLabel.set("")
 ActuatorSelection.pack()
 
 button_up_state = tkinter.Button(RightButtonsFrame,
-                                 text="Up",
+                                 text="Up \n (Up arrow key)",
                                  command=buttonCommand_moveUp,
                                  height=4,
                                  fg="black",
-                                 width=8,
+                                 width=10,
                                  bd=5,
                                  activebackground='green'
                                  )
 button_up_state.pack(side='top', ipadx=10, padx=10, pady=10)
 
 button_down_state = tkinter.Button(RightButtonsFrame,
-                                   text="Down",
+                                   text="Down \n (Down arrow key)",
                                    command=buttonCommand_moveDown,
                                    height=4,
                                    fg="black",
-                                   width=8,
+                                   width=10,
                                    bd=5,
                                    activebackground='green'
                                    )
@@ -948,7 +1044,7 @@ ManWFLabel = tkinter.Label(master=ManualFrameWF,
                            font=("Courier", 12, 'bold')).grid(row=0, column=0, rowspan = 1, columnspan = 3, pady=20)  # Manual wire feed controls label
 
 button_FeedWireBack = tkinter.Button(ManualFrameWF,
-                                     text="Backward",
+                                     text="Backward \n (Left arrow key)",
                                      command=buttonCommand_FeedWireBackward,
                                      height=2,
                                      fg="black",
@@ -958,7 +1054,7 @@ button_FeedWireBack = tkinter.Button(ManualFrameWF,
 button_FeedWireBack.grid(row=1,column=0, columnspan=1, pady=20, padx=10)
 
 button_FeedWireFwd = tkinter.Button(master=ManualFrameWF,
-                                     text="Forward",
+                                     text="Forward \n (Right arrow key)",
                                      command=buttonCommand_FeedWireForward,
                                      height=2,
                                      fg="black",
@@ -968,7 +1064,7 @@ button_FeedWireFwd = tkinter.Button(master=ManualFrameWF,
 button_FeedWireFwd.grid(row=1, column=2, columnspan=1, pady=20, padx=10)
 
 button_Stop = tkinter.Button(master=ManualFrameWF,
-                                     text="STOP",
+                                     text="STOP (Shift key)",
                                      command=buttonCommand_STOP,
                                      height=2,
                                      fg="black",
@@ -982,7 +1078,7 @@ ManualFrameWF.grid(row=2, column=0, pady=20)
 # Fill in automatic wire feed frame
 AutoFrameWF = tkinter.Frame(master=tkTop, height=200, width=600, bg='gray')
 AutoFrameWFLabel = tkinter.Label(master=AutoFrameWF,
-                           text='Automatic Wire Feed Controls',
+                           text='Automatic Wire Feed Controls \n\n Default: 1 in/s',
                            font=("Courier", 12, 'bold'),
                            bg="gray").grid(row=0, column=0, columnspan=3, pady=20)  # Automatic wire feed controls label
 
@@ -1008,6 +1104,11 @@ button_UpdateTarget = tkinter.Button(AutoFrameWF,
                                      activebackground='green'
                                      )
 button_UpdateTarget.grid(row=2, column=2, padx=10)
+
+WFSpeedLabelVar = tkinter.IntVar()
+WFSpeedLabel = tkinter.Label(master=AutoFrameWF, textvariable=WFSpeedLabelVar, bg = "gray")
+WFSpeedLabelVar.set("")
+WFSpeedLabel.grid(row=3, column=0, columnspan = 3)
 
 #Fill in rotating platform manual control
 ManualFrameRP = tkinter.Frame(master=tkTop, height=200, width=900)
@@ -1054,12 +1155,12 @@ ManualFrameRP.grid(row=3, column=0, pady=20, sticky="N")
 # Fill in automatic platform control frame
 AutoFrameRP = tkinter.Frame(master=tkTop, height=200, width=600, bg='gray')
 AutoFrameRPLabel = tkinter.Label(master=AutoFrameRP,
-                           text='Automatic Rotating Platform Controls',
+                           text='Automatic Rotating Platform Controls \n\n Default: 3 deg/s',
                            font=("Courier", 12, 'bold'),
                            bg="gray").grid(row=0, column=0, columnspan=3, pady=20)  # Automatic rotating platform controls label
 
 button_AutoRP_OnOff = tkinter.Button(AutoFrameRP,
-                                     text="Automatic Rotating Platform Speed On/Off",
+                                     text="Automatic Rotating Platform Speed On/Off \n (Control Key)",
                                      command=buttonCommand_updateAutoRPOnOff,
                                      height=2,
                                      fg="black",
@@ -1132,14 +1233,14 @@ RotationFrame.grid(row=4, column=0)
 StopStartFrame = tkinter.Frame(master=tkTop, height=200, width=900)
 StopStartLabel = tkinter.Label(master=StopStartFrame,  text='STOP and START buttons', font=("Courier", 12, 'bold')).grid(row=0, column = 0, columnspan=6)
 button_STOPEVERYTHING = tkinter.Button(master=StopStartFrame,
-                                       text='STOP ALL OPERATIONS',
+                                       text='STOP ALL OPERATIONS (SPACE BAR)',
                                        command=buttonCommand_STOPEVERYTHING,
                                        height=10,
                                        fg='white',
                                        width=50,
                                        background='red',
                                        bd=5)
-button_STOPEVERYTHING.grid(row=1,column=0, columnspan = 3)
+button_STOPEVERYTHING.grid(row=2,column=0, columnspan = 3)
 
 button_STARTEVERYTHING = tkinter.Button(master=StopStartFrame,
                                        text='START ALL OPERATIONS',
@@ -1149,9 +1250,14 @@ button_STARTEVERYTHING = tkinter.Button(master=StopStartFrame,
                                        width=50,
                                        background='green',
                                        bd=5)
-button_STARTEVERYTHING.grid(row=1,column=3, columnspan = 3)
+button_STARTEVERYTHING.grid(row=2,column=3, columnspan = 3)
 
 StopStartFrame.grid(row=4, column=1)
+
+StopLabelVar = tkinter.IntVar()
+StopLabel = tkinter.Label(master=StopStartFrame, textvariable=StopLabelVar)
+StopLabelVar.set("NOT STOPPED")
+StopLabel.grid(row=1, column=0, columnspan = 6)
 
 
 tkinter.mainloop() # run loop watching for gui interactions
