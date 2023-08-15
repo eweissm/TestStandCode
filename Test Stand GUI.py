@@ -22,10 +22,9 @@ import numpy as np
 import keyboard
 
 
-RPtoggle = False
-
 GPIO.setmode(GPIO.BOARD)
 GPIO.setwarnings(False)
+
 # Define motor pins
 # Rotating Platform
 RPPUL = 29 #Pulse
@@ -42,63 +41,32 @@ RPUL = 40#15
 RDIR = 38#13
 RENA = 36 #11
 
-# Limit Switches
-LSR = 35
-LSL = 37
-
 # Wirefeeder
-wf_A = 12
-wf_B = 32
+WFPUL = 12 #Pulse
+WFDIR = 16 #Direction
+WFENA = 7 #Enable 
 
-# Motor Encoder
-MEPinA = 22
-MEPinB = 16
 
 # Stop variable
 global stopALL
 stopALL = False
 
+RPtoggle = False
+
 # Setting up motor pins
-motorPins = [RPPUL, RPDIR, RPENA, LPUL, LDIR, LENA, RPUL, RDIR, RENA]
+motorPins = [RPPUL, RPDIR, RPENA, LPUL, LDIR, LENA, RPUL, RDIR, RENA, WFPUL, WFDIR, WFENA]
 for pin in motorPins:
     GPIO.setup(pin, GPIO.OUT)
     GPIO.output(pin, False)
+    
+#disable all drives
 GPIO.output(RPENA, GPIO.HIGH)
 GPIO.output(LENA, GPIO.HIGH)
 GPIO.output(RENA, GPIO.HIGH)
-GPIO.setup(wf_A, GPIO.OUT)
-GPIO.setup(wf_B, GPIO.OUT)
-GPIO.setup(LSR, GPIO.IN, pull_up_down = GPIO.PUD_DOWN)
-GPIO.setup(LSL, GPIO.IN, pull_up_down = GPIO.PUD_DOWN)
-
-# Setting PWM pins for the wire feeder
-pwmA = GPIO.PWM(wf_A, 1000)
-pwmB = GPIO.PWM(wf_B, 1000)
-pwmB.start(0)
-pwmA.start(0)
-
-# Setting rotary encoder interrupt pins as pull up
-GPIO.setup(MEPinA, GPIO.IN, pull_up_down=GPIO.PUD_UP)
-GPIO.setup(MEPinB, GPIO.IN, pull_up_down=GPIO.PUD_UP)
-
-# Variables for wire feeder speed feedback
-global counter
-global L
-global PeriWF
-counter = 0 # Counts the number of steps read by the rotary encoder
-PeriWF = 3.1415926535 * 1.18  # Circumference in inches
-L = PeriWF / 600           # Distance per pulse
-
-# Wire feeder variables to determine direction
-global forward
-global backward
-global stop
-forward = False
-backward = False
-stop = False
+GPIO.output(WFENA, GPIO.HIGH)
 
 global stopWF
-stopWF = False
+stopWF = True
 
 # Variables for actuators
 global CurrentHeight
@@ -113,30 +81,6 @@ RPcounter = 0 # Counts the number of steps taken
 RProtations = 0 # Counts the number of rotations done
 global numRotations
 
-# Encoder counter function.
-
-def update_counter(channel):
-    '''This function determines which direction the encoder is spinning by 
-    checking what value pin B is when pin A is rising. It updates the global 
-    counter variable accordingly.'''
-    global counter
-    state_A = GPIO.input(MEPinA)
-    state_B = GPIO.input(MEPinB)
-
-    if state_B == 1:
-        counter = counter + 1
-    else:
-        counter = counter - 1
-        
-# Setting interrupt functions for the encoder. 
-'''This detects when pin A is
- rising and calls the update_counter function to update the counter whenever
- pin A rises.'''
-GPIO.add_event_detect(MEPinA, GPIO.RISING, callback=update_counter)
-
-
-#        motor functions
-
 # Rotating platform functions
 
 def RPCW(TargetAngleSpeed):
@@ -150,7 +94,7 @@ def RPCW(TargetAngleSpeed):
     global RPcounter
     global RProtations
     global RPtoggle
-    #print("CW")
+    
     GPIO.output(RPENA, GPIO.LOW) # Turn motor on
     GPIO.output(RPDIR, GPIO.HIGH) # Set direction to clockwise
     delay = 16*28.125 / (TargetAngleSpeed*130) # Calculate the delay based on teh target angular speed of the platform
@@ -161,13 +105,10 @@ def RPCW(TargetAngleSpeed):
         GPIO.output(RPPUL, GPIO.LOW)
         time.sleep(delay)
         RPcounter = RPcounter+1 # Counts the number of steps
-        #print(RPcounter)
         if RPcounter == 400*130: # Counts the number of rotations
             RProtations = RProtations + 1 # Update number of rotations
-            #print(RProtations)
             RPcounter = 0 # Reset step counter
     if RPtoggle == False: # Exits the thread and turns off the motor
-        #print("Thread terminated")
         GPIO.output(RPENA, GPIO.HIGH)
         return
     return
@@ -183,11 +124,7 @@ def RPCCW(TargetAngleSpeed):
     global RPtoggle
     global RPcounter
     global RProtations
-    oldtime = 0
-    oldcount = 0
-    previousSpeedf = 0
-    previousSpeed = 0
-    #print("CCW")
+
     GPIO.output(RPENA, GPIO.LOW) # Turn motor on
     GPIO.output(RPDIR, GPIO.LOW) # Set direction to clockwise
     delay = 16*28.125 / (TargetAngleSpeed*130) # Calculate the delay based on the target angular speed of the platform
@@ -198,56 +135,16 @@ def RPCCW(TargetAngleSpeed):
         GPIO.output(RPPUL, GPIO.LOW)
         time.sleep(delay)
         RPcounter = RPcounter+1 # Counts the number of steps
-        #print(RPcounter)
+        
         if RPcounter == 400*130: # Counts the number of rotations
-            #print(RProtations)
+            
             RProtations = RProtations + 1 # Update number of rotations
             RPcounter = 0 # Reset step counter
-        
-        currenttime = time.perf_counter() # Get current time
-        dt = currenttime - oldtime # Find change in time to find the time step
-        dcount = abs(counter - oldcount) # Find change in encoder steps from last time step
-        dL = dcount * L # Distance traveled since last step
-        speedWF = dL/dt # Calculate the current speed
-        speedWFf = 0.9274 * previousSpeedf + 0.03681 * speedWF + 0.0359 * previousSpeed # Low-pass filter for the speed measurement to eliminate noise
-        oldtime = currenttime
-        oldtime = currenttime
-        oldcount = counter
-        previousSpeed = speedWF
-        previousSpeedf = speedWFf
-        print(round(speedWFf,3))
+
     if RPtoggle == False: # Exits the thread and turns off the motor
         #print("Thread terminated")
         GPIO.output(RPENA, GPIO.HIGH)
         return
-    return
-
-def RPANGLE():
-    '''This function reads global variables for target angle, target angular
-    speed, and spin direction. The target steps are calculated based on the
-    slew drive pitch and the steps/rev on the encoder. The delay is calculated
-    based on the target speed. The function checks which direction to spin
-    then rotates the motor the desired number of steps at the desired speed
-    and returns when done.'''
-    global TargetAngle
-    global TargetAngleSpeed
-    global RotateDirectionState
-    GPIO.output(RPENA, GPIO.LOW)
-    TargetSteps = 130*TargetAngle*17.777 # Calculates the number of steps to take for a desired angle of rotation
-    TargetSteps = int(TargetSteps) # Converts the number of steps to an integer
-    delay = 8*28.125 / (TargetAngleSpeed*130) # Calculates the delay based on teh target angular speed
-    delay = delay / 1000
-    if RotateDirectionState == 0: # Checks which direction to turn
-        GPIO.output(RPDIR, GPIO.LOW)
-    else:
-        GPIO.output(RPDIR, GPIO.HIGH)
-    for i in range(TargetSteps-1): # Loops for the number of steps calculated
-        GPIO.output(RPPUL, GPIO.HIGH)
-        time.sleep(delay)
-        GPIO.output(RPPUL, GPIO.LOW)
-        time.sleep(delay)
-        if stopALL:
-            return
     return
 
 # Linear actuator functions
@@ -264,19 +161,10 @@ def ZeroRActuator():
     stepsR = 0
     stepsL = 0
     # Run motors down until the limit switch is hit (Commented out for now because of faulty limit switch)
-    '''while not GPIO.input(LSR) and not stopALL:
-        GPIO.output(RPUL, GPIO.HIGH)
-        time.sleep(0.00001)
-        GPIO.output(RPUL, GPIO.LOW)
-        time.sleep(0.00001)
-        stepsR = stepsR + 1'''
     CurrentHeight = 0
-    print("Right Actuator Zeroed")
     ActuatorSelectionLabel.set("Current Height [mm]: " + str(CurrentHeight)) # Update the current height label
     GPIO.output(RENA, GPIO.HIGH) 
     return
-
-
 
 def ZeroLActuator():
     '''This function modifies the global variable keeping track of the current
@@ -287,16 +175,8 @@ def ZeroLActuator():
     GPIO.output(LDIR, GPIO.LOW)
     steps = 6400
     stepsR = 0
-    # Run motors down until the limit switch is hit (Commented out for now because of faulty limit switch)
-    '''while not GPIO.input(LSL) and not stopALL:
-        GPIO.output(LPUL, GPIO.HIGH)
-        time.sleep(0.00001)
-        GPIO.output(LPUL, GPIO.LOW)
-        time.sleep(0.00001)
-        stepsL = stepsL + 1'''
+
     CurrentHeight = 0
-    print(GPIO.input(LSL))
-    print("Left Actuator Zeroed")
     GPIO.output(LENA, GPIO.HIGH)
     return
 
@@ -405,205 +285,61 @@ def Target():
     return
 
 # Wire feeder functions
-def WFforward():
-    '''This function spins the wire feeder forward based on the global variable
-    for target speed in in/s. It uses a low-pass filter to clean up the signal
-    then calculates an error between the target speed and the current filtered
-    speed. The output speed is saturated at the PWM limits (percentage from 0-100).
-    Using this value, the motor then spins at that calculated PWM percent. The 
-    function also checks for stop all and stop wire feeder flags. It returns when
-    any stop flag becomes true.'''
-    global counter
-    global L
-    global forward
-    global backward
-    global stop
-    global TargetSpeed
-    # Set all the storing variables for previous outputs, errors, speeds, filtered speeds, and time
-    oldtime = 0
-    oldcount = 0
-    prev2Error = 0
-    prevError = 0
-    prev3Output = 0
-    prev2Output = 0
-    prevOutput = 0
-    currenttime = 0
-    starttime = time.perf_counter()
-    previousSpeed = 0
-    previousSpeedf = 0
-    Error = 0
-    Output = 0
-    speedWF = 0
-    speedWFf = 0
+def WFforward(TargetSpeed):
+    '''Clockwise rotation: This function takes in a target angular speed and 
+    modifies the stepper motor delay to match the target speed. The delay is 
+    calculated based on the encoder steps/rev setting and the pitch of the 
+    slew drive. While the platform toggle is true and the stop all flag is false, 
+    it will continuously step the motor. For every full rotation, a global 
+    variable is updated to keep track of rotations for the automatic print function.
+    This function returns when the platform toggle is false.'''
     
-    # Loop the encoder filter and controller
-    while forward and not stopALL:
-        time.sleep(0.016) # Delay for stability
+    DegPerStep=0.45
+    Radius = 1.18/2
+    GearReduction = 2
+    
+    global stopWF
+    GPIO.output(WFENA, GPIO.LOW) # Turn motor on
+    GPIO.output(WFDIR, GPIO.LOW) # Set direction to clockwise
+    delay = (Radius*3.14159*DegPerStep)/(180*TargetSpeed*GearReduction) # Calculate the delay based on the target angular speed of the wheel
+    
+    while not stopWF and not stopALL:
+        GPIO.output(WFPUL, GPIO.HIGH)
+        time.sleep(delay)
+        GPIO.output(WFPUL, GPIO.LOW)
+        time.sleep(delay)
         
-        # Rotary encoder filter
-        currenttime = time.perf_counter() # Get current time
-        dt = currenttime - oldtime # Find change in time to find the time step
-        dcount = abs(counter - oldcount) # Find change in encoder steps from last time step
-        dL = dcount * L # Distance traveled since last step
-        speedWF = dL/dt # Calculate the current speed
-        speedWFf = 0.9274 * previousSpeedf + 0.03681 * speedWF + 0.0359 * previousSpeed # Low-pass filter for the speed measurement to eliminate noise
-        WFSpeedLabelVar.set("True Speed: " + str(speedWFf)[0:4])
-        
-        # Wire feeder controller
-        
-        # Default speed set to 1 in/s if no speed is entered
-        try:
-            Error = TargetSpeed - speedWFf # Current error
-        except:
-            Error = 1 - speedWFf
-        Output = 71.48 * Error - 120.5 * prevError + 50.32 * prev2Error  + 1.591* prevOutput - 0.6641 * prev2Output + 0.07266 * prev3Output # Controller function
-        Output = max(min(Output, 100), 0) # Saturation
-        #print(Output)
-        # Send the controller output to the wire feeder
-        pwmA.start(Output)
-        pwmB.start(0)
-        
-        # Store the current variables for the next time step
-        oldtime = currenttime
-        oldcount = counter
-        prev2Error = prevError
-        prevError = Error
-        prev3Output = prev2Output
-        prev2Output = prevOutput
-        prevOutput = Output
-        previousSpeed = speedWF
-        previousSpeedf = speedWFf
-        
-        # Check for the stop variables
-        if stopALL:
-            pwmB.start(0)
-            pwmA.start(0)
-            return
-        if stopWF:
-            pwmB.start(0)
-            pwmA.start(0)
-            return
+    if stopWF == True: # Exits the thread and turns off the motor
+        GPIO.output(WFENA, GPIO.HIGH)
+        return
     return
 
-def WFbackward():
-    '''This function spins the wire feeder backwards based on the global variable
-    for target speed in in/s. It uses a low-pass filter to clean up the signal
-    then calculates an error between the target speed and the current filtered
-    speed. The output speed is saturated at the PWM limits (percentage from 0-100).
-    Using this value, the motor then spins at that calculated PWM percent. The 
-    function also checks for stop all and stop wire feeder flags. It returns when
-    any stop flag becomes true.'''
-    global counter
-    global L
-    global forward
-    global backward
-    global stop
-    global TargetSpeed
-    # Set all the storing variables for previous outputs, errors, speeds, filtered speeds, and time
-    oldtime = 0
-    oldcount = 0
-    prev2Error = 0
-    prevError = 0
-    prev3Output = 0
-    prev2Output = 0
-    prevOutput = 0
-    currenttime = 0
-    starttime = time.perf_counter()
-    previousSpeed = 0
-    previousSpeedf = 0
-    Error = 0
-    Output = 0
-    speedWF = 0
-    speedWFf = 0
+def WFbackward(TargetSpeed):
+    '''Clockwise rotation: This function takes in a target angular speed and 
+    modifies the stepper motor delay to match the target speed. The delay is 
+    calculated based on the encoder steps/rev setting and the pitch of the 
+    slew drive. While the platform toggle is true and the stop all flag is false, 
+    it will continuously step the motor. For every full rotation, a global 
+    variable is updated to keep track of rotations for the automatic print function.
+    This function returns when the platform toggle is false.'''
+    global stopWF
+    DegPerStep=0.45
+    Radius = 1.18/2
+    GearReduction = 2
+    GPIO.output(WFENA, GPIO.LOW) # Turn motor on
+    GPIO.output(WFDIR, GPIO.HIGH) # Set direction to Counterclockwise
+    delay = (Radius*3.14159*DegPerStep)/(180*TargetSpeed*GearReduction) # Calculate the delay based on the target angular speed of the platform
     
-    # Loop the encoder filter and controller
-    while backward:
-        time.sleep(0.016) # Delay for stability
-        
-        # Rotary encoder speed measurement filter
-        currenttime = time.perf_counter() # Get current time
-        dt = currenttime - oldtime # Find change in time to find the time step
-        dcount = abs(counter - oldcount) # Find change in encoder steps from last time step
-        dL = dcount * L # Distance traveled since last step
-        speedWF = dL/dt # Calculate the current speed
-        speedWFf = 0.9274 * previousSpeedf + 0.03681 * speedWF + 0.0359 * previousSpeed # Low-pass filter for the speed measurement to eliminate noise
-        WFSpeedLabelVar.set("True Speed: " + str(speedWFf)[0:4])
-
-        
-        # Wire feeder controller
-        
-        # Default speed set to 1 in/s if no speed is entered
-        try:
-            Error = TargetSpeed - speedWFf # Current error
-        except:
-            Error = 1 - speedWFf
-            
-        Output = 71.48 * Error - 120.5 * prevError + 50.32 * prev2Error  + 1.591* prevOutput - 0.6641 * prev2Output + 0.07266 * prev3Output # Controller
-        Output = max(min(Output, 100), 0) # Saturation
-
-        # Send the controller output to the wire feeder
-        pwmB.start(Output)
-        pwmA.start(0)
-        
-        # Store the current variables for the next time step
-        oldtime = currenttime
-        oldcount = counter
-        prev2Error = prevError
-        prevError = Error
-        prev3Output = prev2Output
-        prev2Output = prevOutput
-        prevOutput = Output
-        previousSpeed = speedWF
-        previousSpeedf = speedWFf
-        
-        # Check for the stop variables
-        if stopALL:
-            pwmB.start(0)
-            pwmA.start(0)
-            return
-        if stopWF:
-            pwmB.start(0)
-            pwmA.start(0)
-            return
-    return
-
-def forwardWF():
-    global TargetSpeed
-    Output = 0
-    while forward:
-        Output = max(min(Output, 100),0)
-        pwmA.start(TargetSpeed)
-        pwmB.start(0)
-        
-        if stopALL or stopWF:
-            pwmA.start(0)
-            pwmB.start(0)
-            print("stop")
-            return
+    while not stopWF and not stopALL:
+        GPIO.output(WFPUL, GPIO.HIGH)
+        time.sleep(delay)
+        GPIO.output(WFPUL, GPIO.LOW)
+        time.sleep(delay)
+    if stopWF == True: # Exits the thread and turns off the motor
+        GPIO.output(WFENA, GPIO.HIGH)
+        return
     return
     
-def backwardWF():
-    global TargetSpeed
-    Output = 0
-    while backward:
-        Output = max(min(Output, 100),0)
-        pwmB.start(TargetSpeed)
-        pwmA.start(0)
-        
-        if stopALL or stopWF:
-            pwmA.start(0)
-            pwmB.start(0)
-            print("stop")
-            return
-    return
-    
-def WFstop():
-    '''This function turns off the wire feeder when stop flag is true and returns.'''
-    if(stopWF):
-        pwmB.start(0)
-        pwmA.start(0)
-    return
-
 def PRINT():
     '''This function lowers the height of the platform by the global variable
     DeltaH every time the platform makes a complete rotation. It also starts
@@ -723,15 +459,24 @@ def buttonCommand_updateTargetHeight(): # reads the txt entry and update target 
     global target height variable. It then starts a thread to run the Target
     function.''' 
     global TargetHeight
-    TargetHeight = float(TargetHeightEntry.get())
+    global CurrentHeight
+    print("Update Target Height")
+    
+        #Default height set to current height
+    try:
+        TargetHeight = TargetHeightEntry.get()
+        TargetHeight = float(TargetHeight)
+    except:
+        TargetHeight = CurrentHeight
+    
     # Start the thread
     threadAUTO = threading.Thread(target=Target)
     threadAUTO.start()
 
-
 def buttonCommand_moveUp():  # manual control for moving up
     '''This function starts a thread that just runs the Up function.'''
     # Start the thread
+    print("UP")
     threadUP = threading.Thread(target=Up)
     threadUP.start()
     time.sleep(0.002)
@@ -739,12 +484,14 @@ def buttonCommand_moveUp():  # manual control for moving up
 def buttonCommand_moveDown():  # manual control for moving down
     '''This function starts a thread that just runs the Down function.'''
     # Start the thread
+    print("DOWN")
     threadDOWN = threading.Thread(target=Down)
     threadDOWN.start()
     time.sleep(0.002)
     
 def buttonCommand_ZeroActuators():
     '''This function starts a thread that runs the ZeroRActuator and ZeroLActuator functions.'''
+    print("Zero Actuators")
     # Start the threads
     threadZR = threading.Thread(target=ZeroRActuator)
     threadZR.start()
@@ -754,55 +501,46 @@ def buttonCommand_ZeroActuators():
 def buttonCommand_FeedWireForward():  # manual control for feeding the wire forward
     '''This function assigns the global forward boolean to True and makes all others False.
     It starts a thread that runs the WFforward function.'''
-    global forward
-    global backward
+    global TargetSpeed
     global stopWF
+    print("WF Forward")
     
     # Update the direction variables
-    forward = True
-    backward = False
-    stopWF = False
     
-    # Start the thread
-    threadWF = threading.Thread(target = WFforward)
-    #threadWF = threading.Thread(target = forwardWF)
-    threadWF.start()
+    buttonCommand_updateTargetSpeed()
+    if stopWF:
+        stopWF = False
+        # Start the thread
+        threadWF = threading.Thread(target = WFforward,args = (TargetSpeed,))
+        threadWF.start()
         
 def buttonCommand_FeedWireBackward():  #manual control for feeding the wire backward
     '''This function assigns the global backward boolean to True and makes all others False.
     It starts a thread that runs the WFbackward function.'''
-    global forward
-    global backward
     global stopWF
+    global TargetSpeed
+    print("WF backwards")
     
     # Update the direction variables
-    forward = False
-    backward = True
-    stopWF = False
+    buttonCommand_updateTargetSpeed()
     
-    # Start the thread
-    threadWF = threading.Thread(target = WFbackward)
-    #threadWF = threading.Thread(target = backwardWF)
-    threadWF.start()
+    if stopWF:
+        stopWF = False
+    
+        # Start the thread
+        threadWF = threading.Thread(target = WFbackward,args = (TargetSpeed,))
+        threadWF.start()
 
 def buttonCommand_STOP(): # manual control for stopping wire feed
     '''This function assigns the global stop boolean to True and makes all others False.
     It starts a thread that runs the WFstop function.'''
-    global forward
-    global backward
+    print("Stop WF")
     global stopWF
+    stopWF=True
     
-    # Update the direction variables
-    forward = False
-    backward = False
-    stopWF = True
-    
-    # Start the thread
-    threadWF = threading.Thread(target = WFstop)
-    threadWF.start()
-    
-def buttonCommand_updateTargetSpeed(): #Reads the txt entry and sends to serial message arduino to update target speed
-    '''This function assigns an entered target speed to the TargetSpeed global variable.'''
+def buttonCommand_updateTargetSpeed(): #Reads the txt entry to update target speed fpor WF
+    '''This function assigns an entered target speed to the TargetSpeed global variable for the wire feeder.'''
+    print("Update Wire Feed Target Speed")
     global TargetSpeed
     
     #Default speed set to 1 in/s if no speed is entered
@@ -811,39 +549,28 @@ def buttonCommand_updateTargetSpeed(): #Reads the txt entry and sends to serial 
         TargetSpeed = float(TargetSpeed)
     except:
         TargetSpeed = 1
- 
 
-def buttonCommand_RotateCW(): # manual control for rotating platform clockwise
+def buttonCommand_RotateCW(): # manual control for setting rotating platform direction to clockwise
     '''This function assigns the global rotation direction variable to CW.'''
+    print("RP Rotation Set to CW")
 
     global RotateDirectionState
     RotateDirectionState = 1
     RotateDirection.set("Clockwise")
 
-def buttonCommand_RotateCCW(): # manual control for rotating platform counterclockwise
+def buttonCommand_RotateCCW(): # manual control for setting rotating platform direction to counterclockwise
     '''This function assigns the global rotation direction variable to CCW.'''
-
+    print("RP Rotation Set to CCW")
     global RotateDirectionState
     RotateDirectionState = 0
     RotateDirection.set("Counter-Clockwise")
 
-def buttonCommand_Rotate(): # Control for rotating platform a certain angle
-    '''This function assigns a target rotating platform angle to the global 
-    variable and starts a thread to run the RPANGLE function.'''
-
-    global TargetAngle
-    TargetAngle = float(TargetAngleEntry.get())
-    
-    # Start the thread
-    threadRPangle = threading.Thread(target=RPANGLE)
-    threadRPangle.start()
-
-def buttonCommand_updateAutoRPOnOff(): # Toggles between manual and automated control of rotating platform speed
+def buttonCommand_updateAutoRPOnOff(): # Toggles RP on/off
     '''This function toggles the global RPtoggle flag between True and False.
     Depending on the desired direction, it starts a thread that runs either
     the RPCW or RPCCW functtion at an entered target speed. This target
     speed is also stored globally.'''
-
+    print("RP on/off toggled")
     global Automated_Controls_stateRP
     global RPtoggle
     global TargetAngleSpeed
@@ -878,17 +605,21 @@ def buttonCommand_updateAutoRPOnOff(): # Toggles between manual and automated co
                 # Start the thread
                 threadRPCCW = threading.Thread(target=RPCCW, args = (3,))
                 threadRPCCW.start()
-        
 
-def buttonCommand_updateTargetAngleSpeed(): #Reads the txt entry and update target speed
+def buttonCommand_updateTargetAngleSpeed(): #Reads the txt entry and update target speed for the RP
     '''This function updates the global target speed variable with a user
     entered speed.'''
-
+    print("RP Rotation Speed Updated")
     global TargetAngleSpeed
-    TargetAngleSpeed = float(TargetAngleSpeedEntry.get())
     
-
-def buttonCommand_StartRotation(): # Read the txt entry and update the desired number of rotations and the desired delta h
+        #Default speed set to 3 deg/s if no speed is entered
+    try:
+        TargetAngleSpeed = TargetAngleSpeedEntry.get()
+        TargetAngleSpeed = float(TargetAngleSpeed)
+    except:
+        TargetAngleSpeed = 3
+    
+def buttonCommand_StartRotation(): # Starts the automatic print function which begins WF, RP and Z axis to print a can
     '''This function updates the WF direction global variables, the number of rotations
     global variable, and the DeltaH global variable. It then starts a thread
     for the PRINT function and one for the WFforward for automatic printing.'''
@@ -899,7 +630,7 @@ def buttonCommand_StartRotation(): # Read the txt entry and update the desired n
     global forward
     global backward
     global stop
-    
+    print("RP Rotation Started")
     # Update the WF direction variables
     forward = True
     backward = False
@@ -915,19 +646,23 @@ def buttonCommand_StartRotation(): # Read the txt entry and update the desired n
     threadPrint.start()
     threadWF = threading.Thread(target = WFforward)
     threadWF.start()
-
  
-def buttonCommand_STOPEVERYTHING(): # Update the stop variables
+def buttonCommand_STOPEVERYTHING(): # Update the stop variables--stops everything
     '''This function assigns the global variable stopALL to True. All
     functions check for this variable to run, so all other threads are
     terminated when this function is called.'''
+    print("Stop All")
     global stopALL
     stopALL = True
     StopLabelVar.set("STOPPED")
     
-def buttonCommand_STARTEVERYTHING(): # Update the stop variables
+    if RPtoggle:
+        buttonCommand_updateAutoRPOnOff()
+    
+def buttonCommand_STARTEVERYTHING(): # Update the stop variables--resumes everything
     '''This function assignes the global variable stopAll to False, allowing
     all functions to reenable.'''
+    print("Resume All")
     global stopALL
     stopALL = False
     StopLabelVar.set("NOT STOPPED")
@@ -1135,20 +870,6 @@ button_CounterClockwise.grid(row=1, column=3, columnspan=3, padx=10, pady=20)
 RotateDirection = tkinter.IntVar()
 RotateDirectionLabel = tkinter.Label(master=ManualFrameRP, textvariable=RotateDirection, font=("Courier", 12)).grid(row=2, column=0, columnspan=6, padx=10, ipadx=20, pady=5)
 RotateDirection.set("Counter-Clockwise")
-
-TargetAngleLabel = tkinter.Label(master=ManualFrameRP, text="Rotate [deg]:", font=("Courier", 12)).grid(row=3, column=0, columnspan=2, padx=10, pady=5)
-TargetAngleEntry = tkinter.Entry(ManualFrameRP)
-TargetAngleEntry.grid(row=3, column=2, columnspan=2, padx=10, pady=5)
-
-button_TargetAngleUpdate = tkinter.Button(master=ManualFrameRP,
-                                          text="Rotate",
-                                          command=buttonCommand_Rotate,
-                                          height=2,
-                                          fg="black",
-                                          width=15,
-                                          bd=5,
-                                          activebackground='green')
-button_TargetAngleUpdate.grid(row=3, column=5, columnspan=2, padx=10, pady=5)
 
 ManualFrameRP.grid(row=3, column=0, pady=20, sticky="N")
 
